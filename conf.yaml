@@ -1,0 +1,6 @@
+channels:
+  target: 662359799391977472
+  tournament: 300568383626412034
+paths:
+  tokens-file: auth_tokens.yaml
+thresholds: [0.5, 0.25]

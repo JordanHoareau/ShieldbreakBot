@@ -9,32 +9,38 @@ import math
 import discord
 import time
 from datetime import datetime
+import yaml
 import locale
 import asyncio
 from graphqlclient import GraphQLClient
 
 locale.setlocale(locale.LC_TIME, 'fr_FR')
-discordTokenPath = os.path.join(os.getcwd(),"discord_token")
-discordToken = ''
-with open(discordTokenPath, 'r') as discordFile:
-    discordToken = discordFile.readline()
+
+conf_path = os.path.join(os.getcwd(),'conf.yaml')
+with open(conf_path, 'r') as file_stream:
+    conf = yaml.safe_load(file_stream)
+
+tokens_path = os.path.join(os.getcwd(),conf["paths"]["tokens-file"])
+with open(tokens_path, 'r') as file_stream:
+    tokens = yaml.safe_load(file_stream)
+discord_token = tokens['discord']
+smashgg_token = tokens['smash.gg']
 
 apiVersion = 'alpha'
-authTokenPath = os.path.join(os.getcwd(),"auth_token")
 smashGGClient = GraphQLClient('https://api.smash.gg/gql/' + apiVersion)
-with open(authTokenPath, 'r') as authFile:
-    smashGGClient.inject_token('Bearer ' + authFile.readline())        
+smashGGClient.inject_token('Bearer ' + smashgg_token)        
+
+target_channel = conf['channels']['target']
+tournament_channel = conf['channels']['tournament']
 
 thresholdPath = os.path.join(os.getcwd(),"thresholds")
-defaultAnnouncesThresholds = []
-with open(thresholdPath, 'r') as thresholdFile:
-    defaultAnnouncesThresholds = [float(stringThreshold) for stringThreshold in thresholdFile.readline().split()]
+default_announces_thresholds = conf['thresholds']
 
 client = discord.Client()
 
-async def annoucement(retrieveTimer=10):
-    entrantsAnnouncesThresholds = set(defaultAnnouncesThresholds)
-    previousNbEntrants = 0
+async def annoucement(retrieve_time=10):
+    entrants_announces_threshold = set(default_announces_thresholds)
+    previousnb_entrants = 0
     current_shieldpoke = retrieve_correct_shortlink()
     previous_tournament_date = ''
     tournament_date = ''
@@ -43,11 +49,11 @@ async def annoucement(retrieveTimer=10):
     while True:
         # Resets if new Shieldpoke 
         if(current_shieldpoke != retrieve_correct_shortlink() or (previous_tournament_date != '' and tournament_date != previous_tournament_date)):
-            entrantsAnnouncesThresholds = set(defaultAnnouncesThresholds)
+            entrants_announces_threshold = set(default_announces_thresholds)
             current_shieldpoke = retrieve_correct_shortlink()
             current_publish_state = False
             tournament_published = False
-            previousNbEntrants = 0
+            previousnb_entrants = 0
         entrantsAndEventSize = smashGGClient.execute('''query EntrantsAndEventSize($slug: String!) {
             tournament(slug: $slug){
                     name
@@ -68,35 +74,34 @@ async def annoucement(retrieveTimer=10):
             }''',{
         "slug":current_shieldpoke
         })
-        parsedData = json.loads(entrantsAndEventSize)
-        tournamentName = parsedData['data']['tournament']['name']
-        conditionEvent = lambda event : event['name'] == 'Ultimate Singles'
-        ultimateSinglesEvent = next(filter(conditionEvent, parsedData['data']['tournament']['events']))
-        nbEntrants = int(ultimateSinglesEvent['numEntrants'])
-        tournament_date = datetime.fromtimestamp(parsedData['data']['tournament']['startAt']).strftime('%A %d %B %Y')
-        maxEntrants = max([int(phase['name'].split()[1]) for phase in ultimateSinglesEvent['phases']])
-        remainingEntrants = maxEntrants-nbEntrants
-        publish_state = bool(parsedData['data']['tournament']['publishing']['publish'])
-        print(publish_state)
-        entrantsRate = remainingEntrants/maxEntrants
+        parsed_data = json.loads(entrantsAndEventSize)
+        tournament_name = parsed_data['data']['tournament']['name']
+        condition_event = lambda event : event['name'] == 'Ultimate Singles'
+        ultimate_singles_event = next(filter(condition_event, parsed_data['data']['tournament']['events']))
+        nb_entrants = int(ultimate_singles_event['numEntrants'])
+        tournament_date = datetime.fromtimestamp(parsed_data['data']['tournament']['startAt']).strftime('%A %d %B %Y')
+        max_entrants = max([int(phase['name'].split()[1]) for phase in ultimate_singles_event['phases']])
+        remaining_entrants = max_entrants-nb_entrants
+        publish_state = bool(parsed_data['data']['tournament']['publishing']['publish'])
+        entrants_rate = remaining_entrants/max_entrants
         # Publish announcement if tournament published
         if current_publish_state != publish_state and tournament_published == False:
-            venue_address = parsedData['data']['tournament']['venueAddress']
-            short_slug = parsedData['data']['tournament']['shortSlug']
+            venue_address = parsed_data['data']['tournament']['venueAddress']
+            short_slug = parsed_data['data']['tournament']['shortSlug']
             current_publish_state = True
-            sentence = 'Le **'+ tournamentName + '** est en ligne !\r\n:calendar: '+tournament_date+ '\r\n:euro: Entrée à 2€50 / Ultimate Singles à 2€50\r\n:video_game: '+str(maxEntrants)+' places\r\n:pushpin: '+venue_address+'\r\n:pencil2: https://smash.gg/'+short_slug 
-            channel = client.get_channel(653622127815294986)
+            sentence = 'Le **'+ tournament_name + '** est en ligne !\r\n:calendar: '+tournament_date+ '\r\n:euro: Entrée à 2€50 / Ultimate Singles à 2€50\r\n:video_game: '+str(max_entrants)+' places\r\n:pushpin: '+venue_address+'\r\n:pencil2: https://smash.gg/'+short_slug 
+            channel = client.get_channel(target_channel)
             await channel.send(sentence)
             tournament_published = True
         # Attendees threshold reached
-        if previousNbEntrants != remainingEntrants and entrantsRate <= max(entrantsAnnouncesThresholds):
-            sentence = 'Plus que '+str(remainingEntrants)+ (' places ' if remainingEntrants > 1 else ' place ') + 'pour le '+tournamentName+' !\r\n:pushpin: http://smash.gg/'+current_shieldpoke
-            previousNbEntrants = remainingEntrants
-            channel = client.get_channel(653622127815294986)
+        if previousnb_entrants != remaining_entrants and entrants_rate <= max(entrants_announces_threshold):
+            sentence = 'Plus que '+str(remaining_entrants)+ (' places ' if remaining_entrants > 1 else ' place ') + 'pour le '+tournament_name+' !\r\n:pushpin: http://smash.gg/'+current_shieldpoke
+            previousnb_entrants = remaining_entrants
+            channel = client.get_channel(target_channel)
             await channel.send(sentence)
-            entrantsAnnouncesThresholds = remove_thresholds_reached(entrantsAnnouncesThresholds,entrantsRate)
+            entrants_announces_threshold = remove_thresholds_reached(entrants_announces_threshold,entrants_rate)
         previous_tournament_date = tournament_date
-        time.sleep(retrieveTimer)
+        time.sleep(retrieve_time)
 
 def retrieve_correct_shortlink():    
     mrs_request = smashGGClient.execute('''query EntrantsAndEventSize($slug: String!) {
@@ -148,7 +153,7 @@ async def on_ready():
 
     
 def main():
-    client.run(discordToken)
+    client.run(discord_token)
 
 if __name__ == "__main__":
     main()

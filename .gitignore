@@ -139,6 +139,4 @@ dmypy.json
 .history
 
 # End of https://www.gitignore.io/api/python,visualstudiocode
-Seeding/auth_token
-discord_token
-auth_token
+auth_tokens.yaml
